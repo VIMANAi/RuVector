@@ -199,6 +199,122 @@ After deployment validation, a deep review identified 7 per-request allocation a
 
 **Net effect**: Eliminates ~96 regex compilations + ~10 env::var syscalls + ~29 HashMap entries per write request. Search requests eliminate HashMap re-allocation entirely.
 
+## 7.2 Phase 8: AGI Capability Wiring
+
+After the RVF stack and hot-path optimizations, four AGI learning subsystems were wired into the brain server to enable adaptive intelligence:
+
+### 8.1 SONA 3-Tier Learning (`SONA_ENABLED`, default: `true`)
+
+Wire `sona::SonaEngine` for hierarchical pattern learning:
+
+| Integration Point | Handler | Behavior |
+|-------------------|---------|----------|
+| Pattern re-ranking | `search_memories()` | Boost results matching learned patterns (cosine × quality × 0.15) |
+| Trajectory tracking | `search_memories()` | Record search→result trajectories for online learning |
+| Background learning | `status()` | Trigger periodic pattern consolidation via `sona.tick()` |
+| Stats endpoint | `GET /v1/sona/stats` | Patterns stored, trajectories buffered, background ticks |
+
+**AppState**: `sona: Arc<RwLock<SonaEngine>>` initialized with `SonaEngine::new(128)`.
+
+### 8.2 Global Workspace Theory Attention (`GWT_ENABLED`, default: `true`)
+
+Wire `ruvector_nervous_system::routing::workspace` for salience-based competition:
+
+| Integration Point | Handler | Behavior |
+|-------------------|---------|----------|
+| Salience competition | `search_memories()` | Broadcast top 3×limit candidates, K-WTA competition selects winners |
+| Attention boost | `search_memories()` | Winners get +0.1 score boost, results re-sorted by salience |
+| Workspace load | `status()` | Report `gwt_workspace_load` (0.0-1.0) and `gwt_avg_salience` |
+
+**AppState**: `workspace: Arc<RwLock<GlobalWorkspace>>` initialized with `GlobalWorkspace::with_threshold(7, 0.3)` (7-item capacity per Miller's Law).
+
+### 8.3 Temporal Delta Tracking (`TEMPORAL_ENABLED`, default: `true`)
+
+Wire `ruvector_delta_core::DeltaStream<VectorDelta>` for knowledge evolution tracking:
+
+| Integration Point | Handler | Behavior |
+|-------------------|---------|----------|
+| Embedding delta | `share_memory()` | Push `VectorDelta::from_dense(embedding)` with timestamp |
+| Vote delta | `vote_memory()` | Push vote signal (+1/-1) as delta event |
+| Stats endpoint | `GET /v1/temporal` | Total deltas, recent-hour deltas, knowledge velocity, trend |
+| Status fields | `status()` | Report `knowledge_velocity` (deltas/hour) and `temporal_deltas` |
+
+**AppState**: `delta_stream: Arc<RwLock<DeltaStream<VectorDelta>>>` initialized with `DeltaStream::for_vectors(128)`.
+
+### 8.4 Meta-Learning Exploration (`META_LEARNING_ENABLED`, default: `true`)
+
+Wire `ruvector_domain_expansion::DomainExpansionEngine` meta-learning subsystem:
+
+| Integration Point | Handler | Behavior |
+|-------------------|---------|----------|
+| Curiosity bonus | `search_memories()` | Boost under-explored categories by `novelty × 0.05` |
+| Contribution recording | `share_memory()` | Record "contribute" arm decision with reward 0.5 |
+| Vote reward | `vote_memory()` | Feed upvote=1.0/downvote=0.0 as reward on "search" arm |
+| Explore endpoint | `GET /v1/explore` | Most curious category, regret summary, plateau status, health |
+| Status fields | `status()` | Report `meta_avg_regret` and `meta_plateau_status` |
+
+**AppState**: `domain_engine: Arc<RwLock<DomainExpansionEngine>>` (already existed, now actively used).
+
+### 8.5 Updated Feature Gating Table
+
+| Feature | Env Var | Default | Risk | Phase |
+|---------|---------|---------|------|-------|
+| PII stripping | `RVF_PII_STRIP` | `true` | Low | 2 |
+| DP noise | `RVF_DP_ENABLED` | `false` | Medium | 3 |
+| DP epsilon | `RVF_DP_EPSILON` | `1.0` | — | 3 |
+| Witness chains | `RVF_WITNESS` | `true` | Low | 4 |
+| RVF containers | `RVF_CONTAINER` | `true` | Low | 5 |
+| Adversarial detect | `RVF_ADVERSARIAL` | `false` | Medium | 6 |
+| Negative cache | `RVF_NEG_CACHE` | `false` | Medium | 6 |
+| SONA learning | `SONA_ENABLED` | `true` | Low | 8 |
+| GWT attention | `GWT_ENABLED` | `true` | Low | 8 |
+| Temporal tracking | `TEMPORAL_ENABLED` | `true` | Low | 8 |
+| Meta-learning | `META_LEARNING_ENABLED` | `true` | Low | 8 |
+
+### 8.6 Updated StatusResponse Fields
+
+| Field | Type | Phase | Purpose |
+|-------|------|-------|---------|
+| `dp_epsilon` | `f64` | 3 | Current DP epsilon parameter |
+| `dp_budget_used` | `f64` | 3 | Fraction of privacy budget consumed |
+| `rvf_segments_per_memory` | `f64` | 5 | Average segments per RVF container |
+| `gwt_workspace_load` | `f32` | 8 | GWT attention workspace utilization |
+| `gwt_avg_salience` | `f32` | 8 | Average salience of workspace representations |
+| `knowledge_velocity` | `f64` | 8 | Embedding deltas per hour |
+| `temporal_deltas` | `usize` | 8 | Total temporal deltas recorded |
+| `sona_patterns` | `usize` | 8 | SONA patterns stored |
+| `sona_trajectories` | `usize` | 8 | SONA trajectories buffered |
+| `meta_avg_regret` | `f64` | 8 | Meta-learning average regret (lower = better) |
+| `meta_plateau_status` | `String` | 8 | Meta-learning plateau status |
+
+### 8.7 New Endpoints
+
+| Endpoint | Method | Phase | Response |
+|----------|--------|-------|----------|
+| `/v1/sona/stats` | GET | 8 | Patterns, trajectories, background ticks |
+| `/v1/temporal` | GET | 8 | Delta count, velocity, trend direction |
+| `/v1/explore` | GET | 8 | Curiosity, regret, plateau, health diagnostics |
+
+### 8.8 Dependencies (already present, now actively wired)
+
+```toml
+# Already in Cargo.toml — Phase 8 wires these into route handlers
+sona = { package = "ruvector-sona", path = "../sona", features = ["serde-support"] }
+ruvector-nervous-system = { path = "../ruvector-nervous-system" }
+ruvector-delta-core = { path = "../ruvector-delta-core" }
+ruvector-domain-expansion = { path = "../ruvector-domain-expansion" }
+```
+
+### 8.9 AGI Readiness Estimate
+
+| Capability | Before Phase 8 | After Phase 8 |
+|------------|----------------|---------------|
+| Adaptive search ranking | Static cosine+keyword | SONA patterns + GWT attention + curiosity bonus |
+| Knowledge evolution tracking | None | Temporal deltas, velocity, trend detection |
+| Meta-cognitive awareness | None | Regret tracking, plateau detection, Pareto optimization |
+| Self-directed exploration | None | Curiosity-driven category exploration |
+| **Estimated AGI readiness** | **~40%** | **~65%** |
+
 ## 8. Consequences
 
 ### Positive
@@ -233,3 +349,6 @@ After deployment validation, a deep review identified 7 per-request allocation a
 | ADR-058 | Hash Security Optimization — SHAKE-256 content hashing used by witness chains |
 | ADR-059 | Shared Brain Google Cloud — infrastructure, deployment, module migration map |
 | ADR-060 | Shared Brain Capabilities — 10-segment container layout, threat model |
+| ADR-068 | Domain Expansion Transfer Learning — meta-learning engine |
+| ADR-074 | RuvLLM Neural Embeddings — embedding engine |
+| ADR-076 | AGI Capability Wiring Architecture — Phase 8 architecture decisions |

@@ -18,5 +18,6 @@ pub mod reputation;
 pub mod routes;
 pub mod store;
 pub mod tests;
+pub mod midstream;
 pub mod types;
 pub mod verify;

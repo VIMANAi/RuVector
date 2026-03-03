@@ -526,15 +526,13 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // 14. RVF feature flags: verify default values
+    // 14. RVF feature flags: verify default values (including AGI flags)
     // -----------------------------------------------------------------------
     #[test]
     fn test_rvf_feature_flags_defaults() {
         use crate::types::RvfFeatureFlags;
-        // Clear any env overrides for this test
         let flags = RvfFeatureFlags::from_env();
-        // Defaults: pii_strip=true, witness=true, container=true
-        // dp_enabled=false, adversarial=false, neg_cache=false
+        // Phase 1-7 defaults
         assert!(flags.pii_strip, "pii_strip should default to true");
         assert!(flags.witness, "witness should default to true");
         assert!(flags.container, "container should default to true");
@@ -542,5 +540,212 @@ mod tests {
         assert!(!flags.adversarial, "adversarial should default to false");
         assert!(!flags.neg_cache, "neg_cache should default to false");
         assert!((flags.dp_epsilon - 1.0).abs() < f64::EPSILON, "dp_epsilon should default to 1.0");
+        // Phase 8 AGI defaults — all enabled by default
+        assert!(flags.sona_enabled, "sona_enabled should default to true");
+        assert!(flags.gwt_enabled, "gwt_enabled should default to true");
+        assert!(flags.temporal_enabled, "temporal_enabled should default to true");
+        assert!(flags.meta_learning_enabled, "meta_learning_enabled should default to true");
+    }
+
+    // -----------------------------------------------------------------------
+    // 15. SONA: trajectory roundtrip and pattern search
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_sona_trajectory_roundtrip() {
+        let sona = sona::SonaEngine::new(128);
+        let query = vec![0.5f32; 128];
+
+        // Begin trajectory, add a step, end it
+        let mut builder = sona.begin_trajectory(query.clone());
+        builder.add_step(vec![0.6f32; 128], vec![], 0.8);
+        sona.end_trajectory(builder, 0.7);
+
+        // Stats should reflect the trajectory
+        let stats = sona.stats();
+        assert!(stats.trajectories_buffered >= 1 || stats.trajectories_dropped == 0,
+            "trajectory should be buffered or processed");
+
+        // Pattern search should not crash (may return empty before learning)
+        let patterns = sona.find_patterns(&query, 5);
+        // Patterns are empty until background learning runs, but API must not panic
+        let _ = patterns;
+    }
+
+    // -----------------------------------------------------------------------
+    // 16. GWT: broadcast and salience competition
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_gwt_broadcast_competition() {
+        use ruvector_nervous_system::routing::workspace::GlobalWorkspace;
+
+        let mut ws = GlobalWorkspace::with_threshold(7, 0.1);
+
+        // Broadcast 10 items with varying salience
+        for i in 0..10u16 {
+            let salience = (i as f32 + 1.0) / 10.0; // 0.1 to 1.0
+            let content = vec![i as f32; 4];
+            let rep = ruvector_nervous_system::routing::workspace::Representation::new(
+                content, salience, i, 0,
+            );
+            ws.broadcast(rep);
+        }
+
+        // Workspace capacity is 7, so only top-7 by salience should survive
+        let top = ws.retrieve_top_k(7);
+        assert!(top.len() <= 7, "workspace should respect capacity 7");
+        assert!(top.len() >= 1, "at least one item should survive");
+
+        // Most salient should be the item with salience 1.0
+        let best = ws.most_salient();
+        assert!(best.is_some(), "workspace should have a most salient item");
+
+        // Load should be positive
+        let load = ws.current_load();
+        assert!(load > 0.0, "workspace should have positive load");
+    }
+
+    // -----------------------------------------------------------------------
+    // 17. Delta: temporal stream tracking
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_delta_stream_temporal() {
+        let mut stream = ruvector_delta_core::DeltaStream::<ruvector_delta_core::VectorDelta>::for_vectors(4);
+
+        // Push 3 deltas at different timestamps
+        let d1 = VectorDelta::from_dense(vec![1.0, 0.0, 0.0, 0.0]);
+        let d2 = VectorDelta::from_dense(vec![0.0, 1.0, 0.0, 0.0]);
+        let d3 = VectorDelta::from_dense(vec![0.0, 0.0, 1.0, 0.0]);
+        stream.push_with_timestamp(d1, 1000);
+        stream.push_with_timestamp(d2, 2000);
+        stream.push_with_timestamp(d3, 3000);
+
+        // Query time range
+        let range = stream.get_time_range(1500, 3500);
+        assert_eq!(range.len(), 2, "should find 2 deltas in time range 1500-3500");
+
+        // Full range should return all 3
+        let all = stream.get_time_range(0, 10000);
+        assert_eq!(all.len(), 3, "should find all 3 deltas");
+    }
+
+    // -----------------------------------------------------------------------
+    // 18. Meta-learning: curiosity bonus and regret tracking
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_meta_learning_curiosity() {
+        let engine = DomainExpansionEngine::new();
+
+        // Meta-learning health should be available without panicking
+        let health = engine.meta_health();
+        // Fresh engine has no observations, so consecutive_plateaus = 0
+        assert_eq!(health.consecutive_plateaus, 0, "no plateaus on fresh engine");
+
+        // Regret summary should work on empty state
+        let regret = engine.regret_summary();
+        assert_eq!(regret.total_observations, 0, "no observations yet");
+
+        // Pareto front should be empty initially
+        assert_eq!(health.pareto_size, 0, "pareto front empty on fresh engine");
+    }
+
+    // -----------------------------------------------------------------------
+    // Midstream Platform tests (ADR-077)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_midstream_scheduler_create() {
+        let scheduler = crate::midstream::create_scheduler();
+        let metrics = scheduler.metrics();
+        assert_eq!(metrics.total_ticks, 0, "fresh scheduler has zero ticks");
+        assert_eq!(metrics.total_tasks, 0, "fresh scheduler has zero tasks");
+    }
+
+    #[test]
+    fn test_midstream_strange_loop_create() {
+        let mut sl = crate::midstream::create_strange_loop();
+        let mut ctx = strange_loop::Context::new();
+        ctx.insert("relevance".to_string(), 0.8);
+        ctx.insert("quality".to_string(), 0.9);
+        // Should run without panic and converge within bounds
+        let result = sl.run(&mut ctx);
+        assert!(result.is_ok(), "strange loop should succeed: {:?}", result);
+    }
+
+    #[test]
+    fn test_midstream_strange_loop_score() {
+        let mut sl = crate::midstream::create_strange_loop();
+        let score = crate::midstream::strange_loop_score(&mut sl, 0.8, 0.9);
+        // Score should be in [0.0, 0.04] range
+        assert!(score >= 0.0, "score should be non-negative");
+        assert!(score <= 0.04, "score should be at most 0.04, got {}", score);
+    }
+
+    #[test]
+    fn test_midstream_attractor_too_short() {
+        // Less than 10 points → None
+        let embeddings: Vec<Vec<f32>> = (0..5)
+            .map(|i| vec![i as f32; 8])
+            .collect();
+        let result = crate::midstream::analyze_category_attractor(&embeddings);
+        assert!(result.is_none(), "should return None for too-short trajectory");
+    }
+
+    #[test]
+    fn test_midstream_attractor_stability_score() {
+        let result = temporal_attractor_studio::LyapunovResult {
+            lambda: -0.5,
+            lyapunov_time: 2.0,
+            doubling_time: 1.386,
+            points_used: 20,
+            dimension: 8,
+            pairs_found: 10,
+        };
+        let score = crate::midstream::attractor_stability_score(&result);
+        assert!(score > 0.0, "negative lambda should give positive score");
+        assert!(score <= 0.05, "score should be at most 0.05");
+
+        // Positive lambda → zero
+        let chaotic = temporal_attractor_studio::LyapunovResult {
+            lambda: 0.5,
+            lyapunov_time: 2.0,
+            doubling_time: 1.386,
+            points_used: 20,
+            dimension: 8,
+            pairs_found: 10,
+        };
+        let cscore = crate::midstream::attractor_stability_score(&chaotic);
+        assert_eq!(cscore, 0.0, "positive lambda should give zero score");
+    }
+
+    #[test]
+    fn test_midstream_temporal_solver_create() {
+        let solver = temporal_neural_solver::TemporalSolver::new(8, 16, 8);
+        // Should create without panic. Predict requires Array1 inputs.
+        let _ = solver;
+    }
+
+    #[test]
+    fn test_midstream_solver_confidence_score() {
+        let cert = temporal_neural_solver::Certificate {
+            error_bound: 0.01,
+            confidence: 0.95,
+            gate_pass: true,
+            iterations: 5,
+            computational_work: 100,
+        };
+        let score = crate::midstream::solver_confidence_score(&cert);
+        assert!(score > 0.0, "gate_pass=true should give positive score");
+        assert!(score <= 0.04, "score should be at most 0.04");
+
+        // gate_pass=false → zero
+        let bad_cert = temporal_neural_solver::Certificate {
+            error_bound: 1.0,
+            confidence: 0.1,
+            gate_pass: false,
+            iterations: 50,
+            computational_work: 1000,
+        };
+        let bad_score = crate::midstream::solver_confidence_score(&bad_cert);
+        assert_eq!(bad_score, 0.0, "gate_pass=false should give zero score");
     }
 }

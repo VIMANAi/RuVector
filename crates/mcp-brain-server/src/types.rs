@@ -281,6 +281,36 @@ pub struct StatusResponse {
     pub dp_epsilon: f64,
     pub dp_budget_used: f64,
     pub rvf_segments_per_memory: f64,
+    /// Global Workspace Theory attention load (0.0-1.0)
+    pub gwt_workspace_load: f32,
+    /// Global Workspace Theory average salience of current representations
+    pub gwt_avg_salience: f32,
+    /// Knowledge velocity: embedding deltas per hour (temporal tracking)
+    pub knowledge_velocity: f64,
+    /// Total temporal deltas recorded
+    pub temporal_deltas: usize,
+    pub sona_patterns: usize,
+    pub sona_trajectories: usize,
+    /// Meta-learning average regret (lower = better)
+    pub meta_avg_regret: f64,
+    /// Meta-learning plateau status
+    pub meta_plateau_status: String,
+    // ── Midstream Platform (ADR-077) ──
+    /// Nanosecond scheduler total ticks
+    pub midstream_scheduler_ticks: u64,
+    /// Categories with Lyapunov attractor analysis
+    pub midstream_attractor_categories: usize,
+    /// Strange-loop engine version
+    pub midstream_strange_loop_version: String,
+}
+
+/// Response for GET /v1/temporal — temporal delta tracking stats
+#[derive(Debug, Serialize)]
+pub struct TemporalResponse {
+    pub total_deltas: usize,
+    pub recent_hour_deltas: usize,
+    pub knowledge_velocity: f64,
+    pub trend: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -860,6 +890,22 @@ pub struct RvfFeatureFlags {
     pub container: bool,
     pub adversarial: bool,
     pub neg_cache: bool,
+    pub sona_enabled: bool,
+    /// Global Workspace Theory attention layer for search ranking (ADR-075 AGI)
+    pub gwt_enabled: bool,
+    /// Temporal delta tracking for knowledge evolution (ADR-075 AGI)
+    pub temporal_enabled: bool,
+    /// Meta-learning exploration via domain expansion engine (ADR-075 AGI)
+    pub meta_learning_enabled: bool,
+    // ── Midstream Platform (ADR-077) ──
+    /// Nanosecond-scheduler background task management
+    pub midstream_scheduler: bool,
+    /// Temporal-attractor-studio Lyapunov exponent analysis
+    pub midstream_attractor: bool,
+    /// Temporal-neural-solver certified prediction
+    pub midstream_solver: bool,
+    /// Strange-loop recursive meta-cognition
+    pub midstream_strange_loop: bool,
 }
 
 impl RvfFeatureFlags {
@@ -886,6 +932,31 @@ impl RvfFeatureFlags {
                 .map(|v| v == "true" || v == "1")
                 .unwrap_or(false),
             neg_cache: std::env::var("RVF_NEG_CACHE")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false),
+            sona_enabled: std::env::var("SONA_ENABLED")
+                .map(|v| v != "false" && v != "0")
+                .unwrap_or(true),
+            gwt_enabled: std::env::var("GWT_ENABLED")
+                .map(|v| v != "false" && v != "0")
+                .unwrap_or(true),
+            temporal_enabled: std::env::var("TEMPORAL_ENABLED")
+                .map(|v| v != "false" && v != "0")
+                .unwrap_or(true),
+            meta_learning_enabled: std::env::var("META_LEARNING_ENABLED")
+                .map(|v| v != "false" && v != "0")
+                .unwrap_or(true),
+            // Midstream flags default to false (opt-in per ADR-077)
+            midstream_scheduler: std::env::var("MIDSTREAM_SCHEDULER")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false),
+            midstream_attractor: std::env::var("MIDSTREAM_ATTRACTOR")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false),
+            midstream_solver: std::env::var("MIDSTREAM_SOLVER")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false),
+            midstream_strange_loop: std::env::var("MIDSTREAM_STRANGE_LOOP")
                 .map(|v| v == "true" || v == "1")
                 .unwrap_or(false),
         }
@@ -916,11 +987,24 @@ pub struct AppState {
     pub negative_cache: std::sync::Arc<parking_lot::Mutex<rvf_runtime::NegativeCache>>,
     /// RVF feature flags read once at startup (avoids per-request env::var calls)
     pub rvf_flags: RvfFeatureFlags,
+    /// Global Workspace Theory attention layer for memory selection (ADR-075 AGI)
+    pub workspace: std::sync::Arc<parking_lot::RwLock<ruvector_nervous_system::routing::workspace::GlobalWorkspace>>,
+    /// Temporal delta tracking for knowledge evolution (ADR-075 AGI)
+    pub delta_stream: std::sync::Arc<parking_lot::RwLock<ruvector_delta_core::DeltaStream<ruvector_delta_core::VectorDelta>>>,
     /// Cached verifier (holds compiled PiiStripper regexes — avoids recompiling per request)
     pub verifier: std::sync::Arc<parking_lot::RwLock<crate::verify::Verifier>>,
     /// Negative cost fuse: when true, reject all writes (Firestore/GCS errors spiking)
     pub read_only: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub start_time: std::time::Instant,
+    // ── Midstream Platform (ADR-077) ──
+    /// Nanosecond-precision background scheduler (Phase 9b)
+    pub nano_scheduler: std::sync::Arc<nanosecond_scheduler::Scheduler>,
+    /// Per-category Lyapunov exponent results from attractor analysis (Phase 9c)
+    pub attractor_results: std::sync::Arc<parking_lot::RwLock<std::collections::HashMap<String, temporal_attractor_studio::LyapunovResult>>>,
+    /// Temporal neural solver with certified predictions (Phase 9d)
+    pub temporal_solver: std::sync::Arc<parking_lot::RwLock<temporal_neural_solver::TemporalSolver>>,
+    /// Meta-cognitive recursive learning with safety bounds (Phase 9e)
+    pub strange_loop: std::sync::Arc<parking_lot::RwLock<strange_loop::StrangeLoop<strange_loop::ScalarReasoner, strange_loop::SimpleCritic, strange_loop::SafeReflector>>>,
     /// Active SSE sessions: session ID -> sender channel for streaming responses
     pub sessions: std::sync::Arc<dashmap::DashMap<String, tokio::sync::mpsc::Sender<String>>>,
 }

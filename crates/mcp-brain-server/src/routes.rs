@@ -8,8 +8,8 @@ use crate::types::{
     LoraLatestResponse, LoraSubmission, LoraSubmitResponse, PageDelta, PageDetailResponse,
     PageResponse, PageStatus, PartitionQuery, PartitionResult, PublishNodeRequest,
     SearchQuery, ShareRequest, ShareResponse, StatusResponse, SubmitDeltaRequest,
-    TrainingPreferencesResponse, TrainingQuery, TransferRequest, TransferResponse,
-    VoteDirection, VoteRequest, WasmNode, WasmNodeSummary,
+    TemporalResponse, TrainingPreferencesResponse, TrainingQuery, TransferRequest,
+    TransferResponse, VoteDirection, VoteRequest, WasmNode, WasmNodeSummary,
 };
 use axum::{
     extract::{Path, Query, State},
@@ -144,8 +144,39 @@ pub async fn create_router() -> Router {
         rvf_runtime::NegativeCache::new(5, std::time::Duration::from_secs(3600), 10_000),
     ));
 
+    // Global Workspace Theory attention layer (ADR-075 AGI)
+    let workspace = Arc::new(parking_lot::RwLock::new(
+        ruvector_nervous_system::routing::workspace::GlobalWorkspace::with_threshold(7, 0.3),
+    ));
+
+    // Temporal delta tracking for knowledge evolution (ADR-075 AGI)
+    let delta_stream = Arc::new(parking_lot::RwLock::new(
+        ruvector_delta_core::DeltaStream::for_vectors(crate::embeddings::EMBED_DIM),
+    ));
+
     let sessions: Arc<dashmap::DashMap<String, tokio::sync::mpsc::Sender<String>>> =
         Arc::new(dashmap::DashMap::new());
+
+    // ── Midstream Platform (ADR-077) ──
+    let nano_scheduler = Arc::new(crate::midstream::create_scheduler());
+    let attractor_results = Arc::new(parking_lot::RwLock::new(std::collections::HashMap::new()));
+    let temporal_solver = Arc::new(parking_lot::RwLock::new(
+        temporal_neural_solver::TemporalSolver::new(
+            crate::embeddings::EMBED_DIM,
+            64, // hidden size
+            crate::embeddings::EMBED_DIM,
+        ),
+    ));
+    let strange_loop = Arc::new(parking_lot::RwLock::new(
+        crate::midstream::create_strange_loop(),
+    ));
+    tracing::info!(
+        "Midstream platform initialized: scheduler={} attractor={} solver={} strange_loop={}",
+        rvf_flags.midstream_scheduler,
+        rvf_flags.midstream_attractor,
+        rvf_flags.midstream_solver,
+        rvf_flags.midstream_strange_loop,
+    );
 
     let state = AppState {
         store,
@@ -164,9 +195,15 @@ pub async fn create_router() -> Router {
         dp_engine,
         negative_cache,
         rvf_flags,
+        workspace,
+        delta_stream,
         verifier,
         read_only: Arc::new(AtomicBool::new(false)),
         start_time: std::time::Instant::now(),
+        nano_scheduler,
+        attractor_results,
+        temporal_solver,
+        strange_loop,
         sessions,
     };
 
@@ -190,6 +227,10 @@ pub async fn create_router() -> Router {
         .route("/v1/drift", get(drift_report))
         .route("/v1/partition", get(partition))
         .route("/v1/status", get(status))
+        .route("/v1/explore", get(explore_meta_learning))
+        .route("/v1/sona/stats", get(sona_stats))
+        .route("/v1/temporal", get(temporal_stats))
+        .route("/v1/midstream", get(midstream_stats))
         .route("/v1/lora/latest", get(lora_latest))
         .route("/v1/lora/submit", post(lora_submit))
         .route("/v1/training/preferences", get(training_preferences))
@@ -233,6 +274,15 @@ pub async fn create_router() -> Router {
         })
         .layer(TraceLayer::new_for_http())
         .layer(tower_http::limit::RequestBodyLimitLayer::new(1_048_576)) // 1MB
+        // Security response headers
+        .layer(tower_http::set_header::SetResponseHeaderLayer::overriding(
+            axum::http::header::HeaderName::from_static("x-content-type-options"),
+            axum::http::header::HeaderValue::from_static("nosniff"),
+        ))
+        .layer(tower_http::set_header::SetResponseHeaderLayer::overriding(
+            axum::http::header::HeaderName::from_static("x-frame-options"),
+            axum::http::header::HeaderValue::from_static("DENY"),
+        ))
         .with_state(state)
 }
 
@@ -495,6 +545,25 @@ async fn share_memory(
         drift.record(&memory.category.to_string(), &memory.embedding);
     }
 
+    // ── Temporal: Record embedding delta (ADR-075 AGI) ──
+    // Reuse now_ns from witness chain computation above to avoid redundant syscall
+    if state.rvf_flags.temporal_enabled {
+        let delta = ruvector_delta_core::VectorDelta::from_dense(embedding.clone());
+        state.delta_stream.write().push_with_timestamp(delta, now_ns);
+    }
+
+    // ── Meta-learning: Record contribution as decision (ADR-075 AGI) ──
+    if state.rvf_flags.meta_learning_enabled {
+        let bucket = ruvector_domain_expansion::ContextBucket {
+            difficulty_tier: "default".into(),
+            category: memory.category.to_string(),
+        };
+        let arm = ruvector_domain_expansion::ArmId("contribute".into());
+        state.domain_engine.write().meta.record_decision(&bucket, &arm, 0.5);
+    }
+    // Capture category key before memory is moved into store
+    let memory_cat_key = memory.category.to_string();
+
     // Add to graph
     {
         let mut graph = state.graph.write();
@@ -510,6 +579,32 @@ async fn share_memory(
 
     // Update contributor reputation: record activity + increment count
     state.store.record_contribution(&contributor.pseudonym).await;
+
+    // ── SONA: Record share as learning trajectory ──
+    // Uses embedding by reference where possible; begin_trajectory needs owned vec
+    if state.rvf_flags.sona_enabled {
+        let sona = state.sona.read();
+        let emb_for_step = embedding.clone();
+        let mut builder = sona.begin_trajectory(embedding);
+        builder.add_step(emb_for_step, vec![], 0.5);
+        sona.end_trajectory(builder, 0.5);
+    }
+
+    // ── Midstream: Update attractor analysis for this category (ADR-077 Phase 9c) ──
+    // Amortized: only recompute every 10th write (memory_count % 10 == 0) to avoid
+    // O(n) scan on every write. Lyapunov estimates are stable enough to skip updates.
+    if state.rvf_flags.midstream_attractor && state.store.memory_count() % 10 == 0 {
+        let cat_key = memory_cat_key;
+        let cat_embeddings: Vec<Vec<f32>> = state.store
+            .all_memories()
+            .iter()
+            .filter(|m| m.category.to_string() == cat_key)
+            .map(|m| m.embedding.clone())
+            .collect();
+        if let Some(result) = crate::midstream::analyze_category_attractor(&cat_embeddings) {
+            state.attractor_results.write().insert(cat_key, result);
+        }
+    }
 
     Ok((
         StatusCode::CREATED,
@@ -626,12 +721,12 @@ async fn search_memories(
         });
     fn expand_synonyms(tokens: &[String]) -> Vec<String> {
         let mut expanded = tokens.to_vec();
+        let mut seen: std::collections::HashSet<&str> = tokens.iter().map(|s| s.as_str()).collect();
         for tok in tokens {
             if let Some(syns) = SYNONYMS.get(tok.as_str()) {
                 for &s in *syns {
-                    let s = s.to_string();
-                    if !expanded.contains(&s) {
-                        expanded.push(s);
+                    if seen.insert(s) {
+                        expanded.push(s.to_string());
                     }
                 }
             }
@@ -773,8 +868,130 @@ async fn search_memories(
         ranker.rank(&mut scored);
     }
 
+    // ── GWT Attention Layer: broadcast candidates and let salience competition select winners ──
+    // NOTE: Write lock is scoped — released before SONA/meta read locks to avoid contention.
+    if state.rvf_flags.gwt_enabled && scored.len() > limit {
+        use ruvector_nervous_system::routing::workspace::Representation;
+        let mut ws = state.workspace.write();
+        ws.compete();
+
+        let broadcast_count = (limit * 3).min(scored.len());
+        for (i, (score, _mem)) in scored.iter().enumerate().take(broadcast_count) {
+            let rep = Representation::new(
+                vec![*score as f32],
+                *score as f32,
+                i as u16,
+                i as u64,
+            );
+            ws.broadcast(rep);
+        }
+
+        let winners = ws.retrieve_top_k(limit);
+        drop(ws); // Release write lock early — SONA/meta only need read locks
+
+        let winner_set: std::collections::HashSet<usize> = winners
+            .iter()
+            .map(|w| w.source_module as usize)
+            .collect();
+
+        for (i, (score, _)) in scored.iter_mut().enumerate() {
+            if winner_set.contains(&i) {
+                *score += 0.1;
+            }
+        }
+
+        // K-WTA sparse attention (no intermediate sort needed — applied additively)
+        if scored.len() > limit {
+            // Sort once for K-WTA input ordering
+            scored.sort_unstable_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            let kwta = ruvector_nervous_system::KWTALayer::new(scored.len(), limit);
+            let activations: Vec<f32> = scored.iter().map(|(s, _)| *s as f32).collect();
+            let sparse = kwta.sparse_normalized(&activations);
+            for (i, (score, _)) in scored.iter_mut().enumerate() {
+                if sparse[i] > 0.0 {
+                    *score += sparse[i] as f64 * 0.05;
+                }
+            }
+        }
+    }
+
+    // ── SONA: Pattern-based re-ranking ──
+    if state.rvf_flags.sona_enabled {
+        let sona = state.sona.read();
+        let patterns = sona.find_patterns(&query_embedding, 5);
+        if !patterns.is_empty() {
+            let inv_len = 1.0 / patterns.len() as f64;
+            for (score, mem) in &mut scored {
+                let pattern_boost: f64 = patterns.iter()
+                    .map(|p| {
+                        cosine_similarity(&mem.embedding, &p.centroid) as f64
+                            * p.avg_quality as f64
+                    })
+                    .sum::<f64>() * inv_len;
+                *score += pattern_boost * 0.15;
+            }
+        }
+    }
+
+    // ── Meta-learning: Curiosity bonus for under-explored categories (ADR-075 AGI) ──
+    if state.rvf_flags.meta_learning_enabled {
+        let de = state.domain_engine.read();
+        let default_tier: String = "default".into();
+        for (score, mem) in &mut scored {
+            let bucket = ruvector_domain_expansion::ContextBucket {
+                difficulty_tier: default_tier.clone(),
+                category: mem.category.to_string(),
+            };
+            let novelty = de.meta.curiosity.novelty_score(&bucket);
+            *score += novelty as f64 * 0.05;
+        }
+    }
+
+    // ── Midstream: Attractor stability bonus (ADR-077 Phase 9c) ──
+    if state.rvf_flags.midstream_attractor {
+        let attractors = state.attractor_results.read();
+        for (score, mem) in &mut scored {
+            let cat_key = mem.category.to_string();
+            if let Some(result) = attractors.get(&cat_key) {
+                *score += crate::midstream::attractor_stability_score(result) as f64;
+            }
+        }
+    }
+
+    // ── Midstream: Strange-loop meta-cognitive bonus (ADR-077 Phase 9e) ──
+    // Only apply to top candidates to keep within 5ms budget.
+    // Uses select_nth_unstable (O(n)) instead of full sort (O(n log n)).
+    if state.rvf_flags.midstream_strange_loop && scored.len() > limit {
+        let mut sl = state.strange_loop.write();
+        let pivot = limit.min(scored.len()) - 1;
+        scored.select_nth_unstable_by(pivot, |a, b| {
+            b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        for (score, mem) in scored.iter_mut().take(pivot + 1) {
+            let quality = mem.quality_score.mean();
+            let bonus = crate::midstream::strange_loop_score(&mut sl, *score, quality);
+            *score += bonus as f64;
+        }
+    }
+
+    // Single final sort after all AGI + midstream scoring layers
+    scored.sort_unstable_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     scored.truncate(limit);
-    Ok(Json(scored.into_iter().map(|(_, m)| m).collect()))
+    let results: Vec<BrainMemory> = scored.into_iter().map(|(_, m)| m).collect();
+
+    // ── SONA: Record search trajectory for learning ──
+    if state.rvf_flags.sona_enabled && !results.is_empty() {
+        let sona = state.sona.read();
+        let mut builder = sona.begin_trajectory(query_embedding.clone());
+        builder.add_step(
+            results[0].embedding.clone(),
+            vec![],
+            results[0].quality_score.mean() as f32,
+        );
+        sona.end_trajectory(builder, 0.5);
+    }
+
+    Ok(Json(results))
 }
 
 async fn list_memories(
@@ -857,6 +1074,28 @@ async fn vote_memory(
             let down_count = (updated.beta - 1.0) as u32;
             let quality = updated.mean();
             state.store.check_poisoning(&author, down_count, quality).await;
+        }
+    }
+
+    // ── Temporal: Record vote as a quality-change delta (ADR-075 AGI) ──
+    if state.rvf_flags.temporal_enabled {
+        // Encode vote as a small delta: +1.0 for upvote, -1.0 for downvote
+        let vote_signal = if was_upvoted { 1.0f32 } else { -1.0f32 };
+        let delta = ruvector_delta_core::VectorDelta::from_dense(vec![vote_signal]);
+        state.delta_stream.write().push(delta);
+    }
+
+    // ── Meta-learning: Feed vote as reward signal (ADR-075 AGI) ──
+    if state.rvf_flags.meta_learning_enabled {
+        let reward = if was_upvoted { 1.0f32 } else { 0.0f32 };
+        if let Ok(Some(memory)) = state.store.get_memory(&id).await {
+            let cat_str = memory.category.to_string();
+            let bucket = ruvector_domain_expansion::ContextBucket {
+                difficulty_tier: "default".into(),
+                category: cat_str,
+            };
+            let arm = ruvector_domain_expansion::ArmId("search".into());
+            state.domain_engine.write().meta.record_decision(&bucket, &arm, reward);
         }
     }
 
@@ -1052,6 +1291,13 @@ async fn status(
     let dp_budget_used = dp_engine.epsilon() / state.rvf_flags.dp_epsilon.max(1e-10);
     drop(dp_engine);
 
+    // ── SONA: trigger background learning if due ──
+    if state.rvf_flags.sona_enabled {
+        if let Some(msg) = state.sona.read().tick() {
+            tracing::info!("SONA background learning: {msg}");
+        }
+    }
+
     // ADR-075: average RVF segments per memory (reuse all_memories from above)
     let rvf_count = all_memories.iter().filter(|m| m.witness_chain.is_some()).count();
     let rvf_segments_per_memory = if rvf_count > 0 {
@@ -1088,7 +1334,150 @@ async fn status(
         dp_epsilon: state.rvf_flags.dp_epsilon,
         dp_budget_used,
         rvf_segments_per_memory,
+        gwt_workspace_load: state.workspace.read().current_load(),
+        gwt_avg_salience: state.workspace.read().average_salience(),
+        knowledge_velocity: {
+            let ds = state.delta_stream.read();
+            let now_ns = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u64;
+            let one_hour_ns = 3_600_000_000_000u64;
+            ds.get_time_range(now_ns.saturating_sub(one_hour_ns), now_ns).len() as f64
+        },
+        temporal_deltas: state.delta_stream.read().len(),
+        sona_patterns: {
+            let ss = state.sona.read().stats();
+            ss.patterns_stored
+        },
+        meta_avg_regret: state.domain_engine.read().meta.regret.average_regret(),
+        meta_plateau_status: {
+            let cp = state.domain_engine.read().meta.plateau.consecutive_plateaus;
+            if cp == 0 { "learning".to_string() }
+            else if cp <= 2 { format!("mild_plateau({})", cp) }
+            else { format!("severe_plateau({})", cp) }
+        },
+        sona_trajectories: {
+            let ss = state.sona.read().stats();
+            ss.trajectories_buffered
+        },
+        midstream_scheduler_ticks: state.nano_scheduler.metrics().total_ticks,
+        midstream_attractor_categories: state.attractor_results.read().len(),
+        midstream_strange_loop_version: strange_loop::VERSION.to_string(),
     })
+}
+
+/// GET /v1/sona/stats — SONA learning engine statistics (auth required)
+async fn sona_stats(
+    State(state): State<AppState>,
+    _contributor: AuthenticatedContributor,
+) -> Json<serde_json::Value> {
+    let stats = state.sona.read().stats();
+    Json(serde_json::json!({
+        "patterns_stored": stats.patterns_stored,
+        "trajectories_buffered": stats.trajectories_buffered,
+        "trajectories_dropped": stats.trajectories_dropped,
+        "buffer_success_rate": stats.buffer_success_rate,
+        "ewc_tasks": stats.ewc_tasks,
+        "instant_enabled": stats.instant_enabled,
+        "background_enabled": stats.background_enabled,
+        "sona_enabled": state.rvf_flags.sona_enabled,
+    }))
+}
+
+
+/// GET /v1/explore — meta-learning exploration stats (ADR-075 AGI, auth required)
+async fn explore_meta_learning(
+    State(state): State<AppState>,
+    _contributor: AuthenticatedContributor,
+) -> Json<serde_json::Value> {
+    let de = state.domain_engine.read();
+    let health = de.meta.health_check();
+    let regret = de.meta.regret.summary();
+
+    // Find most curious category: check all registered brain categories
+    let categories = ["architecture", "pattern", "solution", "convention",
+                      "security", "performance", "tooling", "debug"];
+    let mut best_cat = None;
+    let mut best_novelty = 0.0f32;
+    for cat in &categories {
+        let bucket = ruvector_domain_expansion::ContextBucket {
+            difficulty_tier: "default".into(),
+            category: cat.to_string(),
+        };
+        let novelty = de.meta.curiosity.novelty_score(&bucket);
+        if novelty > best_novelty {
+            best_novelty = novelty;
+            best_cat = Some(*cat);
+        }
+    }
+
+    let plateau_status = if de.meta.plateau.consecutive_plateaus == 0 {
+        "learning".to_string()
+    } else if de.meta.plateau.consecutive_plateaus <= 2 {
+        format!("mild_plateau({})", de.meta.plateau.consecutive_plateaus)
+    } else {
+        format!("severe_plateau({})", de.meta.plateau.consecutive_plateaus)
+    };
+
+    Json(serde_json::json!({
+        "most_curious_category": best_cat,
+        "most_curious_novelty": best_novelty,
+        "regret_summary": {
+            "total_regret": regret.total_regret,
+            "average_regret": regret.average_regret,
+            "mean_growth_rate": regret.mean_growth_rate,
+            "converged_buckets": regret.converged_buckets,
+            "bucket_count": regret.bucket_count,
+            "total_observations": regret.total_observations
+        },
+        "plateau_status": plateau_status,
+        "is_learning": health.is_learning,
+        "is_diverse": health.is_diverse,
+        "is_exploring": health.is_exploring,
+        "curiosity_total_visits": health.curiosity_total_visits,
+        "pareto_size": health.pareto_size
+    }))
+}
+/// GET /v1/temporal — temporal delta tracking stats (ADR-075 AGI, auth required)
+async fn temporal_stats(
+    State(state): State<AppState>,
+    _contributor: AuthenticatedContributor,
+) -> Json<TemporalResponse> {
+    let ds = state.delta_stream.read();
+    let total_deltas = ds.len();
+
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    let one_hour_ns = 3_600_000_000_000u64;
+    let recent_hour_deltas = ds.get_time_range(now_ns.saturating_sub(one_hour_ns), now_ns).len();
+
+    let knowledge_velocity = recent_hour_deltas as f64;
+
+    let trend = if recent_hour_deltas > 10 {
+        "growing".to_string()
+    } else if recent_hour_deltas > 0 {
+        "stable".to_string()
+    } else {
+        "idle".to_string()
+    };
+
+    Json(TemporalResponse {
+        total_deltas,
+        recent_hour_deltas,
+        knowledge_velocity,
+        trend,
+    })
+}
+
+/// GET /v1/midstream — midstream platform diagnostics (ADR-077)
+async fn midstream_stats(
+    State(state): State<AppState>,
+    _contributor: AuthenticatedContributor,
+) -> Json<crate::midstream::MidstreamStatus> {
+    Json(crate::midstream::collect_status(&state))
 }
 
 /// GET /v1/lora/latest — serve current consensus MicroLoRA weights

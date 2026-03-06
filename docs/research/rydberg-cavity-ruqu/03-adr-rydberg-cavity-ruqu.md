@@ -84,6 +84,14 @@ Use RuVector to index phase regions, symmetry sectors, metastable transitions, a
 - Cavity truncation at low N_max may miss the superradiant transition (mitigated by adaptive truncation with convergence checks)
 - Phase classification thresholds may need tuning per system size (mitigated by finite-size-aware threshold scaling)
 
+## Implementation Timeline
+
+6-phase implementation over 10–24 weeks (expected: 16 weeks). See [10-implementation-phasing.md](10-implementation-phasing.md) for full dependency graph, risk analysis, and acceptance milestones per phase.
+
+**MVP (end of Phase 2, ~8 weeks):** Working exact diag solver for N=12 with parameter sweep and phase classification. No RuVector, no RVF — just the physics working.
+
+**Full system (end of Phase 5, ~16 weeks):** Complete with RuVector memory, finite-size scaling, and RVF phase capsules.
+
 ## Module Structure
 
 ```

@@ -495,35 +495,35 @@ world phase-memory {
 
 ## 4. SOTA Integration: Current Research Context
 
+For the full cited literature review (60+ references across 14 categories), see [06-sota-literature-review.md](06-sota-literature-review.md). Key highlights below.
+
 ### 4.1 Rydberg-Cavity QED State of the Art
 
-The superradiant clock phase result sits within a rapidly developing field. Key SOTA elements:
+**Primary paper.** Liang et al. [arXiv:2504.05126](https://arxiv.org/abs/2504.05126), PRL 2025. Large-scale QMC on triangular Rydberg arrays in a cavity. SRC phase identified.
 
-**Frustrated quantum magnets in cavities.** Recent theoretical work extends beyond the triangular lattice to kagome and pyrochlore geometries, where frustration-induced degeneracy is even more extreme. The cavity coupling mechanism described in the SRC paper generalizes: any frustrated lattice plus a quantized cavity can exhibit novel photon-dressed phases.
+**Experimental milestone.** De Santis et al. [arXiv:2602.12152](https://arxiv.org/abs/2602.12152), Feb 2026. First cavity-coupled Rydberg tweezer array (MPQ, Zeiher group). Dispersive cavity shift ~3 MHz, 322-second trapping. This is the experimental platform that could realize the SRC phase — the gap is now parameter optimization, not fundamental capability.
 
-**Quantum Monte Carlo for cavity systems.** The computational methods used in the SRC paper (effective field theory plus stochastic sampling) represent the current best approach for 2D cavity-coupled systems. Tensor network methods (DMRG, PEPS) are advancing but struggle with the cavity mode's infinite-range coupling. Variational approaches (neural quantum states, VQE-inspired ansatze) are emerging as alternatives for larger systems.
+**Sign-free QMC.** Langheld et al. [arXiv:2409.15082](https://arxiv.org/abs/2409.15082), Sep 2024. Wormhole algorithm for Dicke-Ising models, sign-problem-free even on frustrated lattices. Peng et al. [arXiv:2511.22230](https://arxiv.org/abs/2511.22230), Nov 2025. SSE-based QMC with explicit photon Fock state tracking.
 
-**Experimental progress.** Rydberg atom arrays in optical cavities are being realized in several labs. Tweezer arrays provide site-resolved control of individual atoms. Cavity integration adds the global coupling mode. The gap between theory and experiment is narrowing — the SRC phase could be experimentally accessible within 2-5 years.
+**DMRG for cavity QED.** Vu et al. (JCTC, 2024). DMRG with Pauli-Fierz Hamiltonian — asymptotically constant cost as photon basis grows. Mendonça et al. [arXiv:2601.10210](https://arxiv.org/abs/2601.10210), Jan 2026. NLCE+DMRG for Dicke-Ising chain in thermodynamic limit.
 
-**Digital-analog quantum simulation.** Hybrid approaches that combine digital gate operations with analog Hamiltonian evolution are being explored for simulating exactly these kinds of systems on near-term quantum hardware. The ruQu hybrid workflow maps to this paradigm.
+**Neural quantum states.** Roth et al. (PRB 108, 2023). Deep GCNNs outperform DMRG for 2D frustrated magnets. No existing work combines NQS with cavity QED — this is a gap ruQu could fill.
 
 ### 4.2 RVF and WASM Component Model State of the Art
 
-**WASI Preview 2 and the Component Model.** The WebAssembly Component Model (released 2024, stabilizing through 2025-2026) provides the WIT interface definition language, canonical ABI for cross-component communication, and typed resource handles. This is the foundation for the phase capsule architecture.
+**WASM 3.0 deterministic profile.** [Announced September 2025](https://webassembly.org/news/2025-09-17-wasm-3.0/). Mandates canonical NaN production for all non-deterministic floating-point operations. This is the standard that enables reproducible cross-host phase computation. Previously, NaN payloads were implementation-defined, making bit-exact reproducibility impossible without canonicalization overhead.
 
-**Deterministic WASM execution.** Recent work on deterministic floating-point in WASM (wasm-float proposal, canonical NaN handling) addresses the reproducibility requirement for scientific computing. The canonical ABI's treatment of floats ensures cross-host consistency.
+**WASM in scientific computing.** Nature Technology Feature [(March 2024)](https://www.nature.com/articles/d41586-024-00725-1) surveyed WASM adoption. WASM 3.0 addresses the prior 4 GB memory limit with 64-bit addressing.
 
-**Capability-based security in WASM.** The resource handle model in WIT implements an object-capability security pattern. Combined with WASI's capability-based filesystem and network access, this provides the security model needed for proof-gated phase computation.
+**Capability-based security in WASM.** The WIT resource handle model implements object-capability security. Combined with WASI's capability-based filesystem and network access, this provides proof-gated phase computation.
 
-**Post-quantum signatures.** ML-DSA (formerly CRYSTALS-Dilithium) is standardized in FIPS 204 (2024). RVF's optional ML-DSA-65 signatures provide quantum-resistant attestation for phase capsules — relevant since the capsules themselves model quantum systems.
+**Post-quantum signatures.** ML-DSA standardized in FIPS 204 (2024). RVF's optional ML-DSA-65 signatures provide quantum-resistant attestation for phase capsules.
 
 ### 4.3 Verifiable Scientific Computing
 
-**Reproducibility crisis in computational physics.** A growing body of work documents failures in reproducing published simulation results. The receipt-based provenance chain in the phase capsule directly addresses this: every phase point carries cryptographic proof of its computation.
+**Proof-carrying code.** Necula, POPL 1997 — original formulation. The phase capsule's receipt chain extends this concept from code verification to scientific simulation verification.
 
-**Proof-carrying computation.** The concept of attaching machine-checkable proofs to computational results originated in programming language theory (proof-carrying code, Necula 1997). Extending this to scientific simulation is an active research direction. The phase capsule's receipt chain is an instance of this pattern applied to quantum many-body physics.
-
-**Federated scientific computing.** Distributed parameter sweeps across institutions require result integrity. The phase capsule's split verification model (tile signature + hub coherence) enables federated phase diagram construction where no single party needs to trust the others.
+**Federated scientific computing.** Distributed parameter sweeps across institutions require result integrity. The phase capsule's split verification model (tile signature + hub coherence) enables federated phase diagram construction where no single party needs to trust the others. No existing system provides this for quantum simulation.
 
 ---
 

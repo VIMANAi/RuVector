@@ -96,6 +96,8 @@ Multiple solver strategies, selected based on system size and target accuracy.
 
 **Hybrid strategy:** Use mean-field to identify candidate regions, then refine with variational Monte Carlo, then validate with exact diagonalization on small clusters.
 
+See [07-hilbert-space-scaling.md](07-hilbert-space-scaling.md) for quantitative dimension tables, memory requirements, and wall-clock estimates per solver method. See [08-hamiltonian-derivation.md](08-hamiltonian-derivation.md) for the full Hamiltonian construction including adiabatic elimination and Ginzburg-Landau theory.
+
 ### 2.4 Observable Pipeline (`ruqu::rydberg_cavity::observables`)
 
 Extracts physical observables from the quantum state.

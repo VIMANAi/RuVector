@@ -237,6 +237,8 @@ The phase boundary between SRC and adjacent phases corresponds to a minimum cut 
 2. **Detect cut:** The minimum cut separates nodes in different phases. The cut value indicates transition sharpness (small cut = first-order, large cut = crossover).
 3. **Track evolution:** As system size N increases, the cut value scaling distinguishes genuine phase transitions from finite-size artifacts.
 
+For the formal proof sketch of why mincut detects physical phase boundaries, the validation protocol with precision/recall metrics, and the sheaf Laplacian extension, see [09-finite-size-scaling-mincut.md](09-finite-size-scaling-mincut.md) sections 4–5.
+
 ### 4.3 Witness Logs
 
 Every phase point computation produces a witness:

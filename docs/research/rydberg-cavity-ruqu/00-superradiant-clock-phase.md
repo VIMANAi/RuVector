@@ -166,13 +166,15 @@ RuVector provides structural memory for phase exploration:
 
 ## 6. References and Context
 
-- Superradiant lasers theory: Meiser and Holland
-- Rydberg blockade physics: Jaksch et al., Lukin et al.
-- Order by disorder in frustrated magnets: Villain et al., Henley
-- Dicke superradiance: Dicke 1954, Hepp and Lieb 1973
-- Clock models on triangular lattices: José et al., Kadanoff
+See [06-sota-literature-review.md](06-sota-literature-review.md) for the full cited literature review. Key references:
 
----
+- **[P1]** Liang, Dong, Xiong, Zhang — [arXiv:2504.05126](https://arxiv.org/abs/2504.05126), PRL 2025 (primary paper: SRC phase)
+- **[EXP1]** De Santis et al. — [arXiv:2602.12152](https://arxiv.org/abs/2602.12152), Feb 2026 (first cavity-coupled Rydberg array)
+- **[QMC1]** Langheld et al. — [arXiv:2409.15082](https://arxiv.org/abs/2409.15082), Sep 2024 (sign-free wormhole QMC for Dicke-Ising)
+- **[SR2]** Bohnet et al. — Nature 484, 78 (2012) (first superradiant laser, JILA)
+- **[DICKE1]** Dicke — Phys. Rev. 93, 99 (1954) (superradiance)
+- **[FM1]** Villain — J. Phys. (Paris) 41, 1263 (1980) (order by disorder)
+- **[CLOCK1]** José, Kadanoff et al. — Phys. Rev. B 16, 1217 (1977) (Z_p clock model)
 
 ---
 
@@ -186,6 +188,11 @@ RuVector provides structural memory for phase exploration:
 | [03](03-adr-rydberg-cavity-ruqu.md) | ADR: Rydberg-Cavity ruQu Module | Architectural decisions |
 | [04](04-rvf-wit-cognitive-runtime.md) | RVF WIT Cognitive Runtime | Portable containers, WIT types, receipts |
 | [05](05-portable-phase-capsules.md) | Portable Phase Capsules | Verifiable artifacts, federated discovery |
+| [06](06-sota-literature-review.md) | SOTA Literature Review | 60+ cited references across 14 categories |
+| [07](07-hilbert-space-scaling.md) | Hilbert Space Scaling | Dimensions, memory, wall-clock, budget calibration |
+| [08](08-hamiltonian-derivation.md) | Hamiltonian Derivation | Full H, adiabatic elimination, GL theory, clock terms |
+| [09](09-finite-size-scaling-mincut.md) | Finite-Size Scaling & Mincut | Scaling protocol, mincut proof, sheaf Laplacian |
+| [10](10-implementation-phasing.md) | Implementation Phasing | 6-phase timeline, MVP, dependency graph, risks |
 
 ---
 

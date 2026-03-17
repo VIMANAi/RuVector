@@ -25,30 +25,28 @@ steps:
       - 'push'
       - 'gcr.io/$PROJECT_ID/rvagent-learning:latest'
 
-  # Deploy to Cloud Run
+  # Deploy to Cloud Run Job (not Service - this runs once and exits)
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
       - 'run'
-      - 'deploy'
+      - 'jobs'
+      - 'update'
       - 'rvagent-learning'
       - '--image'
       - 'gcr.io/$PROJECT_ID/rvagent-learning:$COMMIT_SHA'
       - '--region'
       - 'us-central1'
-      - '--platform'
-      - 'managed'
-      - '--allow-unauthenticated'
       - '--memory'
       - '512Mi'
       - '--cpu'
       - '1'
-      - '--timeout'
+      - '--task-timeout'
       - '300'
       - '--set-env-vars'
       - 'RUST_LOG=info,PI_RUVIO_URL=https://pi.ruv.io'
       # Note: Add GOOGLE_API_KEY secret later via:
-      # gcloud run services update rvagent-learning --set-secrets GOOGLE_API_KEY=gemini-api-key:latest
+      # gcloud run jobs update rvagent-learning --set-secrets GOOGLE_API_KEY=gemini-api-key:latest
 
 images:
   - 'gcr.io/$PROJECT_ID/rvagent-learning:$COMMIT_SHA'

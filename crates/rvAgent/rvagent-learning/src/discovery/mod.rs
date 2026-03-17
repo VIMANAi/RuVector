@@ -4,12 +4,15 @@
 //! - DiscoveryLog struct with tool and method attribution
 //! - Scanner for codebase pattern discovery
 //! - Quality assessment integration
+//! - Multi-domain external source discovery (PR #263 approaches)
 
 mod scanner;
 mod analyzer;
+mod external;
 
 pub use scanner::CodebaseScanner;
 pub use analyzer::PatternAnalyzer;
+pub use external::{DiscoveryConfig, DiscoveryDomain, ExternalDiscovery, ExternalSourceError, ResearchClient};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

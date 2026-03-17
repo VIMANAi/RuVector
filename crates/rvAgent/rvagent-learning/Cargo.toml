@@ -33,6 +33,9 @@ uuid = { workspace = true, features = ["v4", "serde"] }
 # HTTP client for API calls
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 
+# URL encoding for API requests
+urlencoding = "2.1"
+
 # Google Cloud integration (via gcloud CLI)
 
 # File watching for continuous mode

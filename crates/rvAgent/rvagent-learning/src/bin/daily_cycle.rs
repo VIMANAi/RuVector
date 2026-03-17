@@ -13,7 +13,7 @@
 
 use rvagent_learning::{
     DailyLearningLoop, SchedulerConfig,
-    discovery::{CodebaseScanner, PatternAnalyzer, DiscoveryLog},
+    discovery::{CodebaseScanner, PatternAnalyzer, DiscoveryLog, DiscoveryConfig, ResearchClient},
     goap::{GoapPlanner, LearningGoal, LearningWorldState},
     integration::PiRuvIoClient,
 };
@@ -97,22 +97,52 @@ async fn run_single_cycle(scan_dir: &str, dry_run: bool) -> anyhow::Result<()> {
     println!();
 
     let start = Instant::now();
+    let mut discoveries: Vec<DiscoveryLog> = Vec::new();
 
-    // Phase 1: Scan codebase
-    println!("📂 Phase 1: Scanning codebase...");
+    // Phase 1: Fetch from external research sources (PR #263 approach)
+    println!("🌐 Phase 1: Fetching external research sources...");
+    let mut research_config = DiscoveryConfig::default();
+    research_config.pubmed_queries = vec![
+        "transformer neural network".to_string(),
+        "large language model".to_string(),
+        "reinforcement learning".to_string(),
+    ];
+    research_config.arxiv_categories = vec![
+        "cs.AI".to_string(),
+        "cs.LG".to_string(),
+    ];
+
+    let research_client = ResearchClient::new(research_config);
+    let external_results = research_client.fetch_all_domains().await;
+
+    let mut external_count = 0;
+    for (domain, external_discoveries) in external_results {
+        println!("   {}: {} discoveries", domain, external_discoveries.len());
+        for ext in external_discoveries {
+            discoveries.push(ext.to_discovery_log());
+            external_count += 1;
+        }
+    }
+    println!("   Total external discoveries: {}", external_count);
+
+    // Phase 2: Scan codebase
+    println!();
+    println!("📂 Phase 2: Scanning codebase...");
     let scanner = CodebaseScanner::new(scan_dir);
     let files = scanner.scan().await?;
     println!("   Found {} files to analyze", files.len());
 
-    // Phase 2: Analyze patterns
-    println!("🔍 Phase 2: Analyzing patterns...");
+    // Phase 3: Analyze patterns from codebase
+    println!("🔍 Phase 3: Analyzing patterns...");
     let analyzer = PatternAnalyzer::new();
     let file_contents: Vec<(String, String)> = files
         .into_iter()
         .map(|f| (f.path.to_string_lossy().to_string(), f.content))
         .collect();
-    let discoveries = analyzer.analyze_files(&file_contents);
-    println!("   Discovered {} patterns", discoveries.len());
+    let codebase_discoveries = analyzer.analyze_files(&file_contents);
+    println!("   Discovered {} patterns from codebase", codebase_discoveries.len());
+    discoveries.extend(codebase_discoveries);
+    println!("   Total discoveries: {}", discoveries.len());
 
     // Show discoveries
     if !discoveries.is_empty() {
@@ -129,9 +159,9 @@ async fn run_single_cycle(scan_dir: &str, dry_run: bool) -> anyhow::Result<()> {
         }
     }
 
-    // Phase 3: GOAP Planning
+    // Phase 4: GOAP Planning
     println!();
-    println!("🧠 Phase 3: GOAP Planning...");
+    println!("🧠 Phase 4: GOAP Planning...");
     let planner = GoapPlanner::new();
     let mut state = LearningWorldState::default();
     state.patterns_discovered = discoveries.len();
@@ -144,7 +174,7 @@ async fn run_single_cycle(scan_dir: &str, dry_run: bool) -> anyhow::Result<()> {
         println!("   - {} (cost: {:.1})", action.action, action.cost);
     }
 
-    // Phase 4: Submit to π.ruv.io (if not dry run)
+    // Phase 5: Submit to π.ruv.io (if not dry run)
     if !dry_run && !discoveries.is_empty() {
         println!();
         println!("☁️  Phase 4: Submitting to π.ruv.io...");
@@ -179,7 +209,7 @@ async fn run_single_cycle(scan_dir: &str, dry_run: bool) -> anyhow::Result<()> {
         }
     } else if dry_run {
         println!();
-        println!("☁️  Phase 4: Skipped (dry run mode)");
+        println!("☁️  Phase 5: Skipped (dry run mode)");
     }
 
     let duration = start.elapsed();

@@ -45,6 +45,10 @@ notify = { version = "6.1", optional = true }
 # rvagent-core = { path = "../rvagent-core", optional = true }
 # ruvector-sona = { path = "../../sona", optional = true }
 
+[dependencies.tracing-subscriber]
+version = "0.3"
+features = ["env-filter"]
+
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3.13"
@@ -57,6 +61,10 @@ full = ["scheduler"]
 
 [lib]
 crate-type = ["rlib"]
+
+[[bin]]
+name = "daily_cycle"
+path = "src/bin/daily_cycle.rs"
 
 [lints.clippy]
 manual_range_contains = "allow"

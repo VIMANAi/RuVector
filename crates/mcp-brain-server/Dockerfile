@@ -67,7 +67,8 @@ RUN sed -i '/ruvector-graph\s*=/d' crates/ruvector-mincut/Cargo.toml && \
     sed -i 's/.is_multiple_of(\([^)]*\))/ % \1 == 0/g' crates/rvf/rvf-wire/src/delta.rs && \
     find crates/rvf -name "*.rs" -exec sed -i 's/.is_multiple_of(\([^)]*\))/ % \1 == 0/g' {} \; && \
     sed -i 's/features = \["storage", "hnsw", "parallel", "simd"\]/features = ["storage", "hnsw", "parallel"]/g' crates/ruvllm/Cargo.toml && \
-    sed -i 's/pub mod simd_intrinsics;/\/\/ pub mod simd_intrinsics;/g' crates/ruvector-core/src/lib.rs
+    sed -i 's/pub mod simd_intrinsics;/\/\/ pub mod simd_intrinsics;/g' crates/ruvector-core/src/lib.rs && \
+    sed -i 's/crate::simd_intrinsics::manhattan_distance_simd(a, b)/a.iter().zip(b.iter()).map(|(x, y)| (x - y).abs()).sum()/g' crates/ruvector-core/src/distance.rs
 
 # Build only mcp-brain-server in release mode
 RUN cargo build --release -p mcp-brain-server
